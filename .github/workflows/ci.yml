@@ -54,6 +54,7 @@ jobs:
 
       - name: Build Java project
         run: |
+          export PATH=/opt/gradle/gradle-8.4/bin:$PATH
           mkdir -p docker_app
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
               echo "Detected Gradle project. Building..."
