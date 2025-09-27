@@ -1,71 +1,63 @@
-name: Java CI on Self-Hosted Runner (Maven or Gradle)
+name: Java CI on Self-Hosted Runner (Build, Deploy, Test)
 
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
 
 jobs:
-  build-and-run:
+  build:
     runs-on: self-hosted
+    outputs:
+      jar-path: ${{ steps.set-jar.outputs.jar-path }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Ensure required applications are installed
         run: |
-          #!/bin/bash
           set -e
-
-          echo "Checking Java..."
+          echo "Installing missing tools if needed..."
+          # Java
           if ! command -v java &> /dev/null; then
-            echo "Java not found. Installing OpenJDK 17..."
             sudo apt-get update && sudo apt-get install -y openjdk-17-jdk
-          else
-            echo "Java is installed: $(java -version 2>&1 | head -n 1)"
           fi
-
-          echo "Checking Maven..."
+          # Maven
           if ! command -v mvn &> /dev/null; then
-            echo "Maven not found. Installing Maven..."
-            sudo apt-get update && sudo apt-get install -y maven
-          else
-            echo "Maven is installed: $(mvn -version | head -n 1)"
+            sudo apt-get install -y maven
           fi
-
-          echo "Checking Gradle..."
+          # Gradle
           if ! command -v gradle &> /dev/null; then
-            echo "Gradle not found. Installing Gradle..."
-            sudo apt-get update && sudo apt-get install -y wget unzip
+            sudo apt-get install -y wget unzip
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -d /opt/gradle /tmp/gradle-8.4-bin.zip
             echo 'export PATH=$PATH:/opt/gradle/gradle-8.4/bin' >> $GITHUB_ENV
             rm /tmp/gradle-8.4-bin.zip
-          else
-            echo "Gradle is installed: $(gradle -v | head -n 1)"
           fi
-
-          echo "Checking lsof..."
+          # lsof
           if ! command -v lsof &> /dev/null; then
-            echo "lsof not found. Installing lsof..."
-            sudo apt-get update && sudo apt-get install -y lsof
-          else
-            echo "lsof is installed: $(lsof -v | head -n 1)"
+            sudo apt-get install -y lsof
           fi
 
-      - name: Detect build system and build project
+      - name: Build project and set JAR path
+        id: set-jar
         run: |
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            echo "Detected Gradle project. Running Gradle build..."
             gradle clean build --no-daemon
+            echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           elif [ -f "pom.xml" ]; then
-            echo "Detected Maven project. Running Maven build..."
             mvn clean install
+            echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           else
-            echo "No recognized build file found (pom.xml or build.gradle). Exiting."
+            echo "No recognized build file found. Exiting."
             exit 1
           fi
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Stop any existing process on port 8084
         run: |
@@ -91,22 +83,21 @@ jobs:
               exit 1
             fi
           done
-          echo "Port $PORT is now free."
 
-      - name: Run Java application on port 8084
+      - name: Start Java application
         run: |
-          if [ -f "build/libs/"*".jar" ]; then
-            JAR_FILE=$(ls build/libs/*.jar | head -n1)
-          elif [ -f "target/"*".jar" ]; then
-            JAR_FILE=$(ls target/*.jar | head -n1)
-          else
-            echo "No JAR file found to run. Exiting."
-            exit 1
-          fi
+          JAR_FILE=${{ needs.build.outputs.jar-path }}
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
           sleep 5
           echo "Application started on port 8084"
-          curl -f http://localhost:8084 || true
+
+  test:
+    needs: deploy
+    runs-on: self-hosted
+    steps:
+      - name: Verify application is running
+        run: |
+          curl -f http://localhost:8084 || exit 1
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
