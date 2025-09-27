@@ -16,15 +16,55 @@ jobs:
       - name: Ensure required applications are installed
         run: |
           set -e
-          # Install Java, Maven, Gradle, lsof if missing
+
+          wait_for_apt() {
+            while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+              echo "Waiting for other apt/dpkg processes to finish..."
+              sleep 3
+            done
+          }
+
+          # Update system
+          wait_for_apt
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jdk maven wget unzip lsof
+
+          # Java 21
+          if ! command -v java &> /dev/null || ! java -version 2>&1 | grep -q "21"; then
+            echo "Installing OpenJDK 21..."
+            wait_for_apt
+            sudo apt-get install -y openjdk-21-jdk
+          fi
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:$PATH
+
+          # Maven
+          if ! command -v mvn &> /dev/null; then
+            wait_for_apt
+            sudo apt-get install -y maven
+          fi
+
+          # wget, unzip, lsof
+          if ! command -v wget &> /dev/null; then
+            wait_for_apt
+            sudo apt-get install -y wget unzip lsof
+          fi
+
+          # Gradle 8.4
+          if ! command -v gradle &> /dev/null; then
+            echo "Installing Gradle 8.4..."
+            sudo rm -rf /opt/gradle/gradle-8.4
+            wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
+            sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
+            rm /tmp/gradle-8.4-bin.zip
+          fi
+          export PATH=/opt/gradle/gradle-8.4/bin:$PATH
 
       - name: Build project and set JAR path
         id: set-jar
         run: |
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
+          java -version
+          gradle -v || true
+          mvn -v || true
 
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
               echo "Detected Gradle project. Building..."
@@ -73,6 +113,9 @@ jobs:
 
       - name: Start Java application and wait until ready
         run: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
+
           JAR_FILE=$(ls *.jar | head -n1)
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
 
