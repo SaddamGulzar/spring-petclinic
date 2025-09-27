@@ -13,6 +13,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Cache Gradle
+        uses: actions/cache@v3
+        with:
+          path: ~/.gradle
+          key: gradle-cache-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: Cache Maven
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: maven-cache-${{ hashFiles('**/pom.xml') }}
+
       - name: Ensure required applications are installed
         run: |
           #!/bin/bash
@@ -64,19 +76,18 @@ jobs:
       - name: Build project and set JAR path
         id: set-jar
         run: |
-          # Set JAVA_HOME and PATH for this step
+          # Set JAVA_HOME and PATH
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
 
-          # Verify java and gradle are available
+          # Verify java and gradle
           java -version
           gradle -v
 
-          # Build logic
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-              echo "Detected Gradle project. Building with refresh dependencies..."
-              gradle clean build --no-daemon --refresh-dependencies || {
-                  echo "Gradle build failed. Check plugin repositories in build.gradle"
+              echo "Detected Gradle project. Building..."
+              gradle clean build --no-daemon || {
+                  echo "Gradle build failed."
                   exit 1
               }
               echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
@@ -108,26 +119,23 @@ jobs:
             kill -9 $PID
           fi
 
-      - name: Wait until port 8084 is free
-        run: |
-          PORT=8084
-          COUNT=0
-          while lsof -i:$PORT > /dev/null; do
-            echo "Port $PORT still in use. Waiting..."
-            sleep 2
-            COUNT=$((COUNT+1))
-            if [ $COUNT -ge 10 ]; then
-              echo "Port $PORT still busy after 20s. Exiting."
-              exit 1
-            fi
-          done
-
-      - name: Start Java application
+      - name: Start Java application and wait until ready
         run: |
           JAR_FILE=${{ needs.build.outputs.jar-path }}
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
-          sleep 5
-          echo "Application started on port 8084"
+
+          echo "Waiting for application to start on port 8084..."
+          COUNT=0
+          until curl -s http://localhost:8084 > /dev/null; do
+              sleep 2
+              COUNT=$((COUNT+1))
+              if [ $COUNT -ge 30 ]; then
+                  echo "Application failed to start within 60s."
+                  tail -n 50 app.log
+                  exit 1
+              fi
+          done
+          echo "Application started successfully."
 
   test:
     needs: deploy
