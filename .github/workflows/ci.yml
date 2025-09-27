@@ -42,7 +42,7 @@ jobs:
           echo "jar-name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
 
       - name: Upload JAR artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: spring-jar
           path: |
@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Download JAR artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: spring-jar
           path: .
@@ -98,3 +98,16 @@ jobs:
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
+
+  cleanup:
+    needs: test
+    runs-on: self-hosted
+    steps:
+      - name: Stop Java application
+        run: |
+          PORT=8084
+          PID=$(lsof -t -i:$PORT || true)
+          if [ ! -z "$PID" ]; then
+            echo "Stopping process on port $PORT (PID $PID)"
+            kill -9 $PID
+          fi
