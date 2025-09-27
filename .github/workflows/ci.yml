@@ -46,7 +46,6 @@ jobs:
           if ! command -v gradle &> /dev/null; then
             wait_for_apt
             sudo apt-get install -y wget unzip
-            # Remove old Gradle installation if exists
             sudo rm -rf /opt/gradle/gradle-8.4
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
@@ -71,12 +70,18 @@ jobs:
           export PATH=$PATH:/opt/gradle/gradle-8.4/bin
 
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            echo "Detected Gradle project. Building..."
-            gradle clean build --no-daemon
+            echo "Detected Gradle project. Building with refresh dependencies..."
+            gradle clean build --no-daemon --refresh-dependencies || {
+              echo "Gradle build failed. Check plugin repositories in build.gradle"
+              exit 1
+            }
             echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           elif [ -f "pom.xml" ]; then
             echo "Detected Maven project. Building..."
-            mvn clean install
+            mvn clean install || {
+              echo "Maven build failed."
+              exit 1
+            }
             echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           else
             echo "No recognized build file found (pom.xml or build.gradle). Exiting."
