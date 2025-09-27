@@ -13,42 +13,73 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Ensure required applications are installed
+      - name: Ensure required applications are installed (lock-safe)
         run: |
+          #!/bin/bash
           set -e
-          echo "Installing missing tools if needed..."
-          # Java
+
+          wait_for_apt() {
+            while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+              echo "Waiting for other apt/dpkg processes to finish..."
+              sleep 3
+            done
+          }
+
+          echo "Checking Java..."
           if ! command -v java &> /dev/null; then
-            sudo apt-get update && sudo apt-get install -y openjdk-17-jdk
+            wait_for_apt
+            sudo apt-get update
+            sudo apt-get install -y openjdk-17-jdk
+          else
+            echo "Java is installed: $(java -version 2>&1 | head -n 1)"
           fi
-          # Maven
+
+          echo "Checking Maven..."
           if ! command -v mvn &> /dev/null; then
+            wait_for_apt
             sudo apt-get install -y maven
+          else
+            echo "Maven is installed: $(mvn -version | head -n 1)"
           fi
-          # Gradle
+
+          echo "Checking Gradle..."
           if ! command -v gradle &> /dev/null; then
+            wait_for_apt
             sudo apt-get install -y wget unzip
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -d /opt/gradle /tmp/gradle-8.4-bin.zip
-            echo 'export PATH=$PATH:/opt/gradle/gradle-8.4/bin' >> $GITHUB_ENV
+            echo "Gradle installed at /opt/gradle/gradle-8.4/bin"
+            # Add Gradle to PATH for current step
+            export PATH=$PATH:/opt/gradle/gradle-8.4/bin
             rm /tmp/gradle-8.4-bin.zip
+          else
+            echo "Gradle is installed: $(gradle -v | head -n 1)"
           fi
-          # lsof
+
+          echo "Checking lsof..."
           if ! command -v lsof &> /dev/null; then
+            wait_for_apt
             sudo apt-get install -y lsof
+          else
+            echo "lsof is installed: $(lsof -v | head -n 1)"
           fi
 
       - name: Build project and set JAR path
         id: set-jar
         run: |
+          # Ensure Gradle path is in current shell
+          export PATH=$PATH:/opt/gradle/gradle-8.4/bin
+
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            echo "Detected Gradle project. Building..."
             gradle clean build --no-daemon
             echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           elif [ -f "pom.xml" ]; then
+            echo "Detected Maven project. Building..."
             mvn clean install
             echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           else
-            echo "No recognized build file found. Exiting."
+            echo "No recognized build file found (pom.xml or build.gradle). Exiting."
             exit 1
           fi
 
@@ -83,6 +114,7 @@ jobs:
               exit 1
             fi
           done
+          echo "Port $PORT is now free."
 
       - name: Start Java application
         run: |
