@@ -44,21 +44,18 @@ jobs:
             sudo apt-get install -y wget unzip lsof
           fi
 
-      - name: Ensure Gradle 8.4 is available
+      - name: Ensure Gradle 8.4 is available temporarily
         run: |
           export GRADLE_DIR=/opt/gradle/gradle-8.4
           export PATH=$GRADLE_DIR/bin:$PATH
 
           if [ ! -d "$GRADLE_DIR" ]; then
-            echo "Gradle 8.4 not found, installing temporarily..."
+            echo "Installing Gradle 8.4 temporarily..."
             sudo mkdir -p /opt/gradle
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
             rm /tmp/gradle-8.4-bin.zip
-          else
-            echo "Gradle 8.4 already exists, reusing..."
           fi
-
           gradle -v
 
       - name: Build project and set JAR path
@@ -84,7 +81,6 @@ jobs:
               exit 1
           fi
 
-          # Set full path for upload
           echo "jar-path=$(pwd)/$JAR_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload JAR artifact
@@ -129,12 +125,11 @@ jobs:
 
           echo "Waiting for application to start on port 8084..."
           COUNT=0
-          until curl -s http://localhost:8084 > /dev/null; do
+          until curl -s http://localhost:8084/actuator/health > /dev/null; do
               sleep 2
               COUNT=$((COUNT+1))
-              if [ $COUNT -ge 60 ]; then   # Wait up to 120s
+              if [ $COUNT -ge 60 ]; then
                   echo "Application failed to start within 120s."
-                  echo "Last 50 lines of app.log:"
                   tail -n 50 app.log
                   exit 1
               fi
@@ -145,31 +140,17 @@ jobs:
     needs: deploy
     runs-on: self-hosted
     steps:
-      - name: Verify application is running
+      - name: Verify application health
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
 
-          echo "Checking application on port 8084..."
-          if ! curl -f http://localhost:8084; then
-            echo "Application is not responding!"
-            echo "Last 50 lines of app.log:"
+          echo "Checking application health..."
+          if ! curl -f http://localhost:8084/actuator/health; then
+            echo "Application is not healthy!"
             tail -n 50 app.log
             exit 1
           fi
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
-
-  cleanup:
-    needs: test
-    runs-on: self-hosted
-    steps:
-      - name: Stop Java application
-        run: |
-          PORT=8084
-          PID=$(lsof -t -i:$PORT || true)
-          if [ ! -z "$PID" ]; then
-            echo "Stopping process on port $PORT (PID $PID)"
-            kill -9 $PID
-          fi
