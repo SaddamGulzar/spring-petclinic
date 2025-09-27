@@ -13,7 +13,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Ensure required applications are installed (lock-safe)
+      - name: Ensure required applications are installed
         run: |
           #!/bin/bash
           set -e
@@ -25,24 +25,20 @@ jobs:
             done
           }
 
-          echo "Checking Java..."
+          # Java
           if ! command -v java &> /dev/null; then
             wait_for_apt
             sudo apt-get update
             sudo apt-get install -y openjdk-17-jdk
-          else
-            echo "Java is installed: $(java -version 2>&1 | head -n 1)"
           fi
 
-          echo "Checking Maven..."
+          # Maven
           if ! command -v mvn &> /dev/null; then
             wait_for_apt
             sudo apt-get install -y maven
-          else
-            echo "Maven is installed: $(mvn -version | head -n 1)"
           fi
 
-          echo "Checking Gradle..."
+          # Gradle
           if ! command -v gradle &> /dev/null; then
             wait_for_apt
             sudo apt-get install -y wget unzip
@@ -50,16 +46,12 @@ jobs:
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
             rm /tmp/gradle-8.4-bin.zip
-          else
-            echo "Gradle is installed: $(gradle -v | head -n 1)"
           fi
 
-          echo "Checking lsof..."
+          # lsof
           if ! command -v lsof &> /dev/null; then
             wait_for_apt
             sudo apt-get install -y lsof
-          else
-            echo "lsof is installed: $(lsof -v | head -n 1)"
           fi
 
       - name: Build project and set JAR path
@@ -68,22 +60,23 @@ jobs:
           PATH: /opt/gradle/gradle-8.4/bin:${{ env.PATH }}
         run: |
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-            echo "Detected Gradle project. Building with refresh dependencies..."
-            gradle clean build --no-daemon --refresh-dependencies || {
-              echo "Gradle build failed. Check plugin repositories in build.gradle"
-              exit 1
-            }
-            echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
+              echo "Detected Gradle project. Building with refresh dependencies..."
+              gradle clean build --no-daemon --refresh-dependencies || {
+                  echo "Gradle build failed. Check plugin repositories in build.gradle"
+                  exit 1
+              }
+              echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           elif [ -f "pom.xml" ]; then
-            echo "Detected Maven project. Building..."
-            mvn clean install || {
-              echo "Maven build failed."
-              exit 1
-            }
-            echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
+              echo "Detected Maven project. Building..."
+              mvn clean install || {
+                  echo "Maven build failed."
+                  exit 1
+              }
+              echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           else
-            echo "No recognized build file found. Exiting."
-            exit 1
+              echo "No recognized build file found. Exiting."
+              exit 1
+          fi
 
   deploy:
     needs: build
@@ -99,8 +92,6 @@ jobs:
           if [ ! -z "$PID" ]; then
             echo "Stopping process on port $PORT (PID $PID)"
             kill -9 $PID
-          else
-            echo "No process running on port $PORT"
           fi
 
       - name: Wait until port 8084 is free
@@ -116,7 +107,6 @@ jobs:
               exit 1
             fi
           done
-          echo "Port $PORT is now free."
 
       - name: Start Java application
         run: |
@@ -130,8 +120,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Verify application is running
-        run: |
-          curl -f http://localhost:8084 || exit 1
+        run: curl -f http://localhost:8084 || exit 1
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
