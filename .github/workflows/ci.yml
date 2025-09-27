@@ -1,4 +1,4 @@
-name: Java CI on Self-Hosted Runner (Build, Deploy, Test)
+name: Java CI on Self-Hosted Runner (Build, Deploy + Test)
 
 on:
   push:
@@ -89,7 +89,7 @@ jobs:
           name: spring-jar
           path: ${{ steps.set-jar.outputs.jar-path }}
 
-  deploy:
+  deploy-and-test:
     needs: build
     runs-on: self-hosted
     steps:
@@ -111,7 +111,7 @@ jobs:
             kill -9 $PID
           fi
 
-      - name: Start Java application and wait until ready
+      - name: Start Java application
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
@@ -120,12 +120,9 @@ jobs:
           echo "Starting JAR: $JAR_FILE"
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
 
-          echo "Listing running Java processes:"
-          ps -ef | grep java
-
-          echo "Waiting for application to start on port 8084..."
+          echo "Waiting for application to start..."
           COUNT=0
-          until curl -s http://localhost:8084/actuator/health > /dev/null; do
+          until curl -s http://localhost:8084/actuator/health | grep -q "UP"; do
               sleep 2
               COUNT=$((COUNT+1))
               if [ $COUNT -ge 60 ]; then
@@ -136,21 +133,10 @@ jobs:
           done
           echo "Application started successfully."
 
-  test:
-    needs: deploy
-    runs-on: self-hosted
-    steps:
-      - name: Verify application health
+      - name: Verify application is running
         run: |
-          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
-
-          echo "Checking application health..."
-          if ! curl -f http://localhost:8084/actuator/health; then
-            echo "Application is not healthy!"
-            tail -n 50 app.log
-            exit 1
-          fi
+          echo "Final health check..."
+          curl -f http://localhost:8084/actuator/health
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
