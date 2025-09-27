@@ -46,10 +46,10 @@ jobs:
           if ! command -v gradle &> /dev/null; then
             wait_for_apt
             sudo apt-get install -y wget unzip
+            # Remove old Gradle installation if exists
+            sudo rm -rf /opt/gradle/gradle-8.4
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
-            sudo unzip -d /opt/gradle /tmp/gradle-8.4-bin.zip
-            echo "Gradle installed at /opt/gradle/gradle-8.4/bin"
-            # Add Gradle to PATH for current step
+            sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
             export PATH=$PATH:/opt/gradle/gradle-8.4/bin
             rm /tmp/gradle-8.4-bin.zip
           else
