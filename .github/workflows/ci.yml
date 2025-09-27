@@ -1,0 +1,112 @@
+name: Java CI on Self-Hosted Runner (Maven or Gradle)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-run:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Ensure required applications are installed
+        run: |
+          #!/bin/bash
+          set -e
+
+          echo "Checking Java..."
+          if ! command -v java &> /dev/null; then
+            echo "Java not found. Installing OpenJDK 17..."
+            sudo apt-get update && sudo apt-get install -y openjdk-17-jdk
+          else
+            echo "Java is installed: $(java -version 2>&1 | head -n 1)"
+          fi
+
+          echo "Checking Maven..."
+          if ! command -v mvn &> /dev/null; then
+            echo "Maven not found. Installing Maven..."
+            sudo apt-get update && sudo apt-get install -y maven
+          else
+            echo "Maven is installed: $(mvn -version | head -n 1)"
+          fi
+
+          echo "Checking Gradle..."
+          if ! command -v gradle &> /dev/null; then
+            echo "Gradle not found. Installing Gradle..."
+            sudo apt-get update && sudo apt-get install -y wget unzip
+            wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
+            sudo unzip -d /opt/gradle /tmp/gradle-8.4-bin.zip
+            echo 'export PATH=$PATH:/opt/gradle/gradle-8.4/bin' >> $GITHUB_ENV
+            rm /tmp/gradle-8.4-bin.zip
+          else
+            echo "Gradle is installed: $(gradle -v | head -n 1)"
+          fi
+
+          echo "Checking lsof..."
+          if ! command -v lsof &> /dev/null; then
+            echo "lsof not found. Installing lsof..."
+            sudo apt-get update && sudo apt-get install -y lsof
+          else
+            echo "lsof is installed: $(lsof -v | head -n 1)"
+          fi
+
+      - name: Detect build system and build project
+        run: |
+          if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+            echo "Detected Gradle project. Running Gradle build..."
+            gradle clean build --no-daemon
+          elif [ -f "pom.xml" ]; then
+            echo "Detected Maven project. Running Maven build..."
+            mvn clean install
+          else
+            echo "No recognized build file found (pom.xml or build.gradle). Exiting."
+            exit 1
+          fi
+
+      - name: Stop any existing process on port 8084
+        run: |
+          PORT=8084
+          PID=$(lsof -t -i:$PORT || true)
+          if [ ! -z "$PID" ]; then
+            echo "Stopping process on port $PORT (PID $PID)"
+            kill -9 $PID
+          else
+            echo "No process running on port $PORT"
+          fi
+
+      - name: Wait until port 8084 is free
+        run: |
+          PORT=8084
+          COUNT=0
+          while lsof -i:$PORT > /dev/null; do
+            echo "Port $PORT still in use. Waiting..."
+            sleep 2
+            COUNT=$((COUNT+1))
+            if [ $COUNT -ge 10 ]; then
+              echo "Port $PORT still busy after 20s. Exiting."
+              exit 1
+            fi
+          done
+          echo "Port $PORT is now free."
+
+      - name: Run Java application on port 8084
+        run: |
+          if [ -f "build/libs/"*".jar" ]; then
+            JAR_FILE=$(ls build/libs/*.jar | head -n1)
+          elif [ -f "target/"*".jar" ]; then
+            JAR_FILE=$(ls target/*.jar | head -n1)
+          else
+            echo "No JAR file found to run. Exiting."
+            exit 1
+          fi
+          nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
+          sleep 5
+          echo "Application started on port 8084"
+          curl -f http://localhost:8084 || true
+
+      - name: Show last 20 log lines
+        run: tail -n 20 app.log
