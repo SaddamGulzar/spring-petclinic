@@ -38,8 +38,6 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y openjdk-17-jdk
           fi
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
 
           # Maven
           if ! command -v mvn &> /dev/null; then
@@ -56,7 +54,6 @@ jobs:
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
             rm /tmp/gradle-8.4-bin.zip
           fi
-          export PATH=$PATH:/opt/gradle/gradle-8.4/bin
 
           # lsof
           if ! command -v lsof &> /dev/null; then
@@ -67,6 +64,15 @@ jobs:
       - name: Build project and set JAR path
         id: set-jar
         run: |
+          # Set JAVA_HOME and PATH for this step
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
+
+          # Verify java and gradle are available
+          java -version
+          gradle -v
+
+          # Build logic
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
               echo "Detected Gradle project. Building with refresh dependencies..."
               gradle clean build --no-daemon --refresh-dependencies || {
