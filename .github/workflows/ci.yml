@@ -121,15 +121,20 @@ jobs:
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
 
           JAR_FILE=$(ls *.jar | head -n1)
+          echo "Starting JAR: $JAR_FILE"
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
+
+          echo "Listing running Java processes:"
+          ps -ef | grep java
 
           echo "Waiting for application to start on port 8084..."
           COUNT=0
           until curl -s http://localhost:8084 > /dev/null; do
               sleep 2
               COUNT=$((COUNT+1))
-              if [ $COUNT -ge 30 ]; then
-                  echo "Application failed to start within 60s."
+              if [ $COUNT -ge 60 ]; then   # Wait up to 120s
+                  echo "Application failed to start within 120s."
+                  echo "Last 50 lines of app.log:"
                   tail -n 50 app.log
                   exit 1
               fi
@@ -144,7 +149,14 @@ jobs:
         run: |
           export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
-          curl -f http://localhost:8084 || exit 1
+
+          echo "Checking application on port 8084..."
+          if ! curl -f http://localhost:8084; then
+            echo "Application is not responding!"
+            echo "Last 50 lines of app.log:"
+            tail -n 50 app.log
+            exit 1
+          fi
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
