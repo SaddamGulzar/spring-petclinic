@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: self-hosted
     outputs:
-      jar-name: ${{ steps.set-jar.outputs.jar-name }}
+      jar-path: ${{ steps.set-jar.outputs.jar-path }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -16,15 +16,12 @@ jobs:
       - name: Ensure required applications are installed
         run: |
           set -e
-
           wait_for_apt() {
             while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
               echo "Waiting for other apt/dpkg processes to finish..."
               sleep 3
             done
           }
-
-          # Update system
           wait_for_apt
           sudo apt-get update
 
@@ -34,8 +31,6 @@ jobs:
             wait_for_apt
             sudo apt-get install -y openjdk-21-jdk
           fi
-          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-          export PATH=$JAVA_HOME/bin:$PATH
 
           # Maven
           if ! command -v mvn &> /dev/null; then
@@ -49,19 +44,29 @@ jobs:
             sudo apt-get install -y wget unzip lsof
           fi
 
-          # Gradle 8.4
-          if ! command -v gradle &> /dev/null; then
-            echo "Installing Gradle 8.4..."
-            sudo rm -rf /opt/gradle/gradle-8.4
+      - name: Ensure Gradle 8.4 is available
+        run: |
+          export GRADLE_DIR=/opt/gradle/gradle-8.4
+          export PATH=$GRADLE_DIR/bin:$PATH
+
+          if [ ! -d "$GRADLE_DIR" ]; then
+            echo "Gradle 8.4 not found, installing temporarily..."
+            sudo mkdir -p /opt/gradle
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
             rm /tmp/gradle-8.4-bin.zip
+          else
+            echo "Gradle 8.4 already exists, reusing..."
           fi
-          export PATH=/opt/gradle/gradle-8.4/bin:$PATH
+
+          gradle -v
 
       - name: Build project and set JAR path
         id: set-jar
         run: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
+
           java -version
           gradle -v || true
           mvn -v || true
@@ -79,15 +84,14 @@ jobs:
               exit 1
           fi
 
-          echo "jar-name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
+          # Set full path for upload
+          echo "jar-path=$(pwd)/$JAR_FILE" >> $GITHUB_OUTPUT
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: spring-jar
-          path: |
-            build/libs/*.jar
-            target/*.jar
+          path: ${{ steps.set-jar.outputs.jar-path }}
 
   deploy:
     needs: build
@@ -137,7 +141,10 @@ jobs:
     runs-on: self-hosted
     steps:
       - name: Verify application is running
-        run: curl -f http://localhost:8084 || exit 1
+        run: |
+          export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+          export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
+          curl -f http://localhost:8084 || exit 1
 
       - name: Show last 20 log lines
         run: tail -n 20 app.log
