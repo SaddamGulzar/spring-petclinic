@@ -8,94 +8,46 @@ jobs:
   build:
     runs-on: self-hosted
     outputs:
-      jar-path: ${{ steps.set-jar.outputs.jar-path }}
+      jar-name: ${{ steps.set-jar.outputs.jar-name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Cache Maven
-        uses: actions/cache@v3
-        with:
-          path: ~/.m2
-          key: maven-cache-${{ hashFiles('**/pom.xml') }}
-
       - name: Ensure required applications are installed
         run: |
-          #!/bin/bash
           set -e
-
-          wait_for_apt() {
-            while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
-              echo "Waiting for other apt/dpkg processes to finish..."
-              sleep 3
-            done
-          }
-
-          # Coreutils for uname
-          if ! command -v uname &> /dev/null; then
-            wait_for_apt
-            sudo apt-get update
-            sudo apt-get install -y coreutils
-          fi
-
-          # Java
-          if ! command -v java &> /dev/null; then
-            wait_for_apt
-            sudo apt-get update
-            sudo apt-get install -y openjdk-17-jdk
-          fi
-
-          # Maven
-          if ! command -v mvn &> /dev/null; then
-            wait_for_apt
-            sudo apt-get install -y maven
-          fi
-
-          # Gradle
-          if ! command -v gradle &> /dev/null; then
-            wait_for_apt
-            sudo apt-get install -y wget unzip
-            sudo rm -rf /opt/gradle/gradle-8.4
-            wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
-            sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
-            rm /tmp/gradle-8.4-bin.zip
-          fi
-
-          # lsof
-          if ! command -v lsof &> /dev/null; then
-            wait_for_apt
-            sudo apt-get install -y lsof
-          fi
+          # Install Java, Maven, Gradle, lsof if missing
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk maven wget unzip lsof
 
       - name: Build project and set JAR path
         id: set-jar
         run: |
-          # Set JAVA_HOME and PATH
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
           export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.4/bin:$PATH
 
-          # Verify java and gradle
-          java -version
-          gradle -v
-
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
               echo "Detected Gradle project. Building..."
-              gradle clean build --no-daemon || {
-                  echo "Gradle build failed."
-                  exit 1
-              }
-              echo "jar-path=build/libs/$(ls build/libs/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
+              gradle clean build --no-daemon || exit 1
+              JAR_FILE=$(ls build/libs/*.jar | head -n1)
           elif [ -f "pom.xml" ]; then
               echo "Detected Maven project. Building..."
-              mvn clean install || {
-                  echo "Maven build failed."
-                  exit 1
-              }
-              echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
+              mvn clean install || exit 1
+              JAR_FILE=$(ls target/*.jar | head -n1)
           else
-              echo "No recognized build file found. Exiting."
+              echo "No recognized build file found."
               exit 1
           fi
+
+          echo "jar-name=$(basename $JAR_FILE)" >> $GITHUB_OUTPUT
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: spring-jar
+          path: |
+            build/libs/*.jar
+            target/*.jar
 
   deploy:
     needs: build
@@ -103,6 +55,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: spring-jar
+          path: .
 
       - name: Stop any existing process on port 8084
         run: |
@@ -115,7 +73,7 @@ jobs:
 
       - name: Start Java application and wait until ready
         run: |
-          JAR_FILE=${{ needs.build.outputs.jar-path }}
+          JAR_FILE=$(ls *.jar | head -n1)
           nohup java -jar "$JAR_FILE" --server.port=8084 > app.log 2>&1 &
 
           echo "Waiting for application to start on port 8084..."
