@@ -49,7 +49,6 @@ jobs:
             sudo rm -rf /opt/gradle/gradle-8.4
             wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -P /tmp
             sudo unzip -o /tmp/gradle-8.4-bin.zip -d /opt/gradle
-            export PATH=$PATH:/opt/gradle/gradle-8.4/bin
             rm /tmp/gradle-8.4-bin.zip
           else
             echo "Gradle is installed: $(gradle -v | head -n 1)"
@@ -65,10 +64,9 @@ jobs:
 
       - name: Build project and set JAR path
         id: set-jar
+        env:
+          PATH: /opt/gradle/gradle-8.4/bin:${{ env.PATH }}
         run: |
-          # Ensure Gradle path is in current shell
-          export PATH=$PATH:/opt/gradle/gradle-8.4/bin
-
           if [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
             echo "Detected Gradle project. Building with refresh dependencies..."
             gradle clean build --no-daemon --refresh-dependencies || {
@@ -84,9 +82,8 @@ jobs:
             }
             echo "jar-path=target/$(ls target/*.jar | head -n1 | xargs -n1 basename)" >> $GITHUB_OUTPUT
           else
-            echo "No recognized build file found (pom.xml or build.gradle). Exiting."
+            echo "No recognized build file found. Exiting."
             exit 1
-          fi
 
   deploy:
     needs: build
